@@ -420,3 +420,178 @@ header {
 | Нет условий | — | Белый |
 
 > Если оба условия выполняются (скидка > 15% И количество = 0), применяются оба класса. Цвет определяется порядком в CSS.
+
+---
+
+## 6. Шаблоны заказов (Модуль 4)
+
+→ [Полный код с объяснением: orders-module.md](orders-module.md)
+
+### core/templates/core/order_list.html
+
+```html
+{% extends 'core/base.html' %}
+
+{% block title %}Список заказов - ООО «Обувь»{% endblock %}
+{% block h1 %}Заказы{% endblock %}
+
+{% block content %}
+<div style="margin-bottom: 10px;">
+    <a href="{% url 'product_list' %}" class="btn-secondary">← К товарам</a>
+    {% if user.role.name == "admin" %}
+    <a href="{% url 'order_create' %}" class="btn" style="margin-left: 10px;">Добавить заказ</a>
+    {% endif %}
+</div>
+
+{% if orders %}
+<table class="orders-table">
+    <thead>
+        <tr>
+            <th>№</th><th>Клиент</th><th>Статус</th>
+            <th>Дата заказа</th><th>Дата доставки</th>
+            <th>Пункт выдачи</th><th>Код</th><th>Позиций</th>
+            {% if user.role.name == "admin" %}<th>Действия</th>{% endif %}
+        </tr>
+    </thead>
+    <tbody>
+        {% for order in orders %}
+        <tr>
+            <td>{{ order.id }}</td>
+            <td>{{ order.client_name|default:"—" }}</td>
+            <td>{{ order.status }}</td>
+            <td>{{ order.order_date|date:"d.m.Y H:i" }}</td>
+            <td>{{ order.delivery_date|date:"d.m.Y H:i" }}</td>
+            <td>{{ order.pickup_point.address|truncatechars:40 }}</td>
+            <td>{{ order.pickup_code }}</td>
+            <td>{{ order.items.count }}</td>
+            {% if user.role.name == "admin" %}
+            <td>
+                <a href="{% url 'order_edit' order.id %}">Редактировать</a> |
+                <form method="post" action="{% url 'order_delete' order.id %}" style="display: inline;"
+                      onsubmit="return confirm('Удалить заказ №{{ order.id }}?')">
+                    {% csrf_token %}
+                    <button type="submit" style="color: red; background: none; border: none; cursor: pointer; font-family: inherit; font-size: inherit; padding: 0;">Удалить</button>
+                </form>
+            </td>
+            {% endif %}
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Заказов пока нет.</p>
+{% endif %}
+{% endblock %}
+```
+
+### core/templates/core/order_form.html
+
+```html
+{% extends 'core/base.html' %}
+
+{% block title %}
+{% if is_edit %}Редактирование заказа{% else %}Новый заказ{% endif %}
+{% endblock %}
+
+{% block h1 %}
+{% if is_edit %}Редактирование заказа №{{ object.pk }}{% else %}Новый заказ{% endif %}
+{% endblock %}
+
+{% block content %}
+<div>
+    <a href="{% url 'order_list' %}" class="btn-secondary">← Назад к заказам</a>
+</div>
+<br>
+<div>
+    {% if is_edit %}
+    <p><strong>ID:</strong>
+        <input type="text" value="{{ object.pk }}" disabled
+               style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;">
+    </p>
+    {% endif %}
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn">Сохранить</button>
+    </form>
+</div>
+{% endblock %}
+```
+
+---
+
+## 7. Обновлённый style.css (полный)
+
+```css
+body {
+  font-family: "Times New Roman", serif;
+}
+
+header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background-color: #7fff00;
+  margin: 10px;
+}
+
+.header-left {
+  font-size: xxx-large;
+  padding: 10px;
+}
+
+.header-left img {
+  width: 50px;
+  height: 50px;
+  object-fit: contain;
+}
+
+.btn {
+  background-color: #00fa9a;
+  border: 1px solid #ccc;
+  padding: 5px 15px;
+  cursor: pointer;
+  font-family: "Times New Roman", serif;
+  font-size: inherit;
+  text-decoration: none;
+  display: inline-block;
+  color: black;
+}
+
+.btn-secondary {
+  background-color: #e0e0e0;
+  border: 1px solid #aaa;
+  padding: 5px 15px;
+  cursor: pointer;
+  font-family: "Times New Roman", serif;
+  font-size: inherit;
+  text-decoration: none;
+  display: inline-block;
+  color: black;
+}
+
+.product-card {
+  border: solid black 2px;
+  display: flex;
+  padding: 10px;
+  margin-bottom: 5px;
+}
+
+.product-card.sale { background-color: #2e8b57; }
+.product-card.out-of-stock { background-color: aqua; }
+.product-card .image { width: 30%; border: 2px gray solid; }
+.product-card .details { flex: 1; border: solid black 1px; margin: 0 10px; padding: 5px; }
+.product-card .sale { border: solid black 1px; font-weight: bold; font-size: x-large; display: flex; align-items: center; justify-content: center; width: 15%; }
+.old-price { text-decoration: line-through; color: red; }
+
+.alert { padding: 10px 15px; margin: 5px 0; border: 1px solid; border-radius: 3px; }
+.alert-success { background-color: #d4edda; border-color: #28a745; color: #155724; }
+.alert-error, .alert-danger { background-color: #f8d7da; border-color: #dc3545; color: #721c24; }
+.alert-warning { background-color: #fff3cd; border-color: #ffc107; color: #856404; }
+.alert-info { background-color: #d1ecf1; border-color: #17a2b8; color: #0c5460; }
+
+.orders-table { width: 100%; border-collapse: collapse; margin-top: 10px; }
+.orders-table th, .orders-table td { border: 1px solid black; padding: 6px 10px; text-align: left; }
+.orders-table th { background-color: #7fff00; }
+.orders-table tr:nth-child(even) { background-color: #f9f9f9; }
+```

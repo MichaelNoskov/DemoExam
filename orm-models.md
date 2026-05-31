@@ -171,6 +171,7 @@ def save(self, *args, **kwargs):
 ```python
 from django.contrib.auth.models import AbstractUser
 from django.db import models
+from PIL import Image
 
 
 class Role(models.Model):
@@ -220,6 +221,14 @@ class Product(models.Model):
         except Exception:
             pass
         super().save(*args, **kwargs)
+        # Ресайз фото до 300×200 пикселей после сохранения на диск
+        if self.photo:
+            try:
+                img = Image.open(self.photo.path)
+                img = img.resize((300, 200), Image.LANCZOS)
+                img.save(self.photo.path)
+            except Exception:
+                pass
 
     @property
     def final_price(self):

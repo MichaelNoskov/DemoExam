@@ -135,22 +135,20 @@ def save(self, *args, **kwargs):
 
 ---
 
-## 8. Ресайз изображений через Pillow (дополнительно)
+## 8. Ресайз изображений через Pillow
 
 ТЗ требует: "Изображение загружается, изменяется размер до 300×200".
 
-Добавить ресайз в метод `save()` **перед** вызовом `super().save()`:
+Подход: сначала сохранить файл на диск через `super().save()`, затем открыть его Pillow и перезаписать.
 
 ```python
 from PIL import Image
-from io import BytesIO
-from django.core.files.base import ContentFile
 
 class Product(models.Model):
     # ...поля...
     
     def save(self, *args, **kwargs):
-        # Сначала удалить старое фото:
+        # 1. Удалить старое фото если заменяется:
         try:
             this = Product.objects.get(id=self.id)
             if this.photo and self.photo and this.photo != self.photo:
@@ -158,51 +156,32 @@ class Product(models.Model):
         except Exception:
             pass
         
-        # Потом ресайз нового:
-        if self.photo:
-            img = Image.open(self.photo)
-            img = img.resize((300, 200), Image.LANCZOS)  # LANCZOS = качественный алгоритм
-            
-            buffer = BytesIO()
-            # Определить формат (JPEG/PNG/etc):
-            img_format = img.format or "JPEG"
-            img.save(buffer, format=img_format)
-            buffer.seek(0)
-            
-            # Заменить файл в поле (без сохранения в БД — save=False):
-            self.photo.save(
-                self.photo.name,
-                ContentFile(buffer.getvalue()),
-                save=False
-            )
-        
+        # 2. Сохранить в БД и на диск:
         super().save(*args, **kwargs)
+        
+        # 3. Ресайз сохранённого файла (теперь self.photo.path доступен):
+        if self.photo:
+            try:
+                img = Image.open(self.photo.path)
+                img = img.resize((300, 200), Image.LANCZOS)
+                img.save(self.photo.path)   # перезаписать файл на диске
+            except Exception:
+                pass
 ```
 
-> **Важно:** Ресайз делать **после** получения старого фото из БД, но **до** `super().save()`.
+> **Почему `super().save()` первым:** До его вызова `self.photo` — это ещё `InMemoryUploadedFile` (данные в памяти). `self.photo.path` становится доступным только после сохранения файла на диск.
 
 ---
 
-## 9. Полный код Product с ресайзом
+## 9. Полный код Product.save() (финальная версия с ресайзом)
 
 ```python
 from PIL import Image
-from io import BytesIO
-from django.core.files.base import ContentFile
 from django.db import models
 
 
 class Product(models.Model):
-    article = models.CharField(max_length=50, unique=True)
-    name = models.CharField(max_length=255)
-    unit = models.CharField(max_length=20, default="шт.")
-    price = models.DecimalField(max_digits=10, decimal_places=2)
-    manufacturer = models.CharField(max_length=200)
-    supplier = models.ForeignKey("Supplier", on_delete=models.CASCADE)
-    category = models.CharField(max_length=200)
-    discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
-    quantity = models.IntegerField(default=0)
-    description = models.TextField()
+    # ...поля...
     photo = models.ImageField(upload_to="products/", null=True, blank=True)
 
     def save(self, *args, **kwargs):
@@ -213,38 +192,16 @@ class Product(models.Model):
                 this.photo.delete(save=False)
         except Exception:
             pass
-        
-        # Ресайз нового фото до 300x200
-        if self.photo:
-            img = Image.open(self.photo)
-            img = img.resize((300, 200), Image.LANCZOS)
-            buffer = BytesIO()
-            img.save(buffer, format=img.format or "JPEG")
-            buffer.seek(0)
-            self.photo.save(self.photo.name, ContentFile(buffer.getvalue()), save=False)
-        
+        # Сохранить файл на диск
         super().save(*args, **kwargs)
-
-    @property
-    def final_price(self):
-        return self.price * (1 - self.discount / 100) if self.discount else self.price
-```
-
----
-
-## 10. Базовый вариант без ресайза (из demoexam_26)
-
-Если ресайз не требуется — используй более простую версию:
-
-```python
-def save(self, *args, **kwargs):
-    try:
-        this = Product.objects.get(id=self.id)
-        if this.photo and self.photo and this.photo != self.photo:
-            this.photo.delete(save=False)
-    except Exception:
-        pass
-    super().save(*args, **kwargs)
+        # Ресайз до 300×200
+        if self.photo:
+            try:
+                img = Image.open(self.photo.path)
+                img = img.resize((300, 200), Image.LANCZOS)
+                img.save(self.photo.path)
+            except Exception:
+                pass
 ```
 
 ---

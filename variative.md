@@ -230,19 +230,18 @@ photo = models.ImageField(upload_to="products/", null=True, blank=True)
 
 ### Дополнительно: ресайз до 300×200
 
-Добавить в `Product.save()`:
+Добавить в `Product.save()` ПОСЛЕ `super().save()`:
 ```python
 from PIL import Image
-from io import BytesIO
-from django.core.files.base import ContentFile
 
+# После super().save() — файл уже на диске, self.photo.path доступен
 if self.photo:
-    img = Image.open(self.photo)
-    img = img.resize((300, 200), Image.LANCZOS)
-    buffer = BytesIO()
-    img.save(buffer, format=img.format or "JPEG")
-    buffer.seek(0)
-    self.photo.save(self.photo.name, ContentFile(buffer.getvalue()), save=False)
+    try:
+        img = Image.open(self.photo.path)
+        img = img.resize((300, 200), Image.LANCZOS)
+        img.save(self.photo.path)
+    except Exception:
+        pass
 ```
 
 ### Полное объяснение Pillow

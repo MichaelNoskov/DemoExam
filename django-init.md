@@ -167,37 +167,36 @@ LOGOUT_REDIRECT_URL = "login"
 
 ---
 
-## 3. config/urls.py — полное содержимое
+## 3. config/urls.py — начальная минимальная версия
+
+На этом этапе `core/views.py` ещё не написан — импортировать нечего. Начинаем с минимума:
 
 ```python
 from django.conf import settings
 from django.conf.urls.static import static
 from django.contrib import admin
-from django.contrib.auth.views import LogoutView
 from django.urls import path
-
-from core.views import (
-    ProductCreateView,
-    ProductListView,
-    ProductUpdateView,
-    UserLoginView,
-)
 
 urlpatterns = [
     path("admin/", admin.site.urls),
-    path("", UserLoginView.as_view(), name="login"),
-    path("logout/", LogoutView.as_view(next_page="login"), name="logout"),
-    path("products/", ProductListView.as_view(), name="product_list"),
-    path("products/add/", ProductCreateView.as_view(), name="product_create"),
-    path("products/<int:pk>/edit/", ProductUpdateView.as_view(), name="product_edit"),
 ]
 
-# Раздача медиафайлов только в режиме разработки
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 ```
 
-> **Замечание:** Импорт из `core.views` добавляем после того как напишем views.py. Если надо запустить сервер раньше — временно закомментируй импорты.
+> **urls.py расширяется постепенно** — каждый следующий этап добавляет свои импорты и path().
+> Финальная версия (с заказами и удалением) — в [README.md → Финальный urls.py](README.md).
+
+### Как добавлять URL по шагам
+
+| Этап | Что добавить в urlpatterns |
+|------|---------------------------|
+| Этап 7 — Login | `path("", UserLoginView...)`, `path("logout/", LogoutView...)` |
+| Этап 8 — ProductList | `path("products/", ProductListView...)` |
+| Этап 9 — CRUD товаров | `path("products/add/", ...)`, `path("products/<int:pk>/edit/", ...)` |
+| Этап 10 — Удаление | `path("products/<int:pk>/delete/", ...)` |
+| Этап 11 — Заказы | `path("orders/", ...)`, `path("orders/add/", ...)`, `path("orders/<int:pk>/edit/", ...)`, `path("orders/<int:pk>/delete/", ...)` |
 
 ---
 

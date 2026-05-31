@@ -6,17 +6,12 @@
 
 ## 1. Классовые представления (CBV) — обзор
 
-Django предоставляет готовые классы для типичных операций. Не нужно писать всё с нуля.
-
 | Класс | Что делает | Обязательные атрибуты |
 |-------|-----------|----------------------|
-| `View` | Базовый класс | `get()` или `post()` методы |
-| `TemplateView` | Показать шаблон | `template_name` |
 | `ListView` | Список объектов | `model`, `template_name` |
-| `DetailView` | Один объект по pk | `model`, `template_name` |
 | `CreateView` | Форма создания | `model`, `form_class`, `success_url` |
 | `UpdateView` | Форма редактирования | `model`, `form_class`, `success_url` |
-| `DeleteView` | Удаление | `model`, `success_url` |
+| `View` | Базовый (get/post методы вручную) | `get()` или `post()` |
 | `LoginView` | Страница входа | `template_name` |
 
 ---
@@ -24,54 +19,36 @@ Django предоставляет готовые классы для типич�
 ## 2. ListView — список объектов
 
 ```python
-from django.views.generic import ListView
-
 class ProductListView(ListView):
-    model = Product               # модель
+    model = Product
     template_name = "core/product_list.html"
     context_object_name = "products"  # имя переменной в шаблоне
     
     def get_queryset(self):
-        # Переопределяем queryset (фильтрация, сортировка)
+        # Переопределяем queryset (фильтрация, поиск, сортировка)
         return Product.objects.all()
     
     def get_context_data(self, **kwargs):
-        # Добавляем данные в контекст шаблона
         context = super().get_context_data(**kwargs)
-        context["extra_data"] = "значение"
+        context["extra"] = "значение"
         return context
 ```
 
-В шаблоне: `{% for product in products %}` (имя = `context_object_name`)
-
 ---
 
-## 3. CreateView — форма создания
+## 3. CreateView / UpdateView
 
 ```python
-from django.views.generic import CreateView
-from django.urls import reverse_lazy
-
 class ProductCreateView(CreateView):
     model = Product
-    form_class = ProductForm          # какая форма использовать
+    form_class = ProductForm
     template_name = "core/product_form.html"
     success_url = reverse_lazy("product_list")  # куда редиректить после успеха
     
     def form_valid(self, form):
-        # Вызывается когда форма валидна
-        messages.success(self.request, "Товар успешно добавлен")
+        messages.success(self.request, "Добавлено!")
         return super().form_valid(form)
-```
 
-> `reverse_lazy` вместо `reverse` — потому что URL конфигурация ещё не загружена при импорте класса.
-
----
-
-## 4. UpdateView — форма редактирования
-
-```python
-from django.views.generic import UpdateView
 
 class ProductUpdateView(UpdateView):
     model = Product
@@ -81,51 +58,42 @@ class ProductUpdateView(UpdateView):
     
     def get_context_data(self, **kwargs):
         context = super().get_context_data(**kwargs)
-        context["is_edit"] = True   # для шаблона: знать что это редактирование
+        context["is_edit"] = True  # флаг для шаблона
         return context
-    
-    def form_valid(self, form):
-        messages.success(self.request, "Товар успешно обновлен")
-        return super().form_valid(form)
 ```
-
-URL для UpdateView должен содержать `<int:pk>` — Django сам подставит объект.
 
 ---
 
-## 5. LoginView — страница входа
+## 4. View — кастомное представление (для удаления)
 
 ```python
-from django.contrib.auth.views import LoginView
+from django.views import View
+from django.shortcuts import get_object_or_404, redirect
 
-class UserLoginView(LoginView):
-    template_name = "core/login.html"
-    # После успешного входа → LOGIN_REDIRECT_URL из settings.py
+class ProductDeleteView(View):
+    def post(self, request, pk):         # только POST (из формы с CSRF)
+        product = get_object_or_404(Product, pk=pk)
+        product.delete()
+        return redirect("product_list")
 ```
 
-Встроенный LoginView:
-- Сам обрабатывает форму username/password
-- Сам хеширует и проверяет пароль в БД
-- Сам создаёт сессию
+Почему `View` а не `DeleteView`: нужен ручной контроль — проверка ссылочной целостности перед удалением.
 
 ---
 
-## 6. Миксины — добавление поведения
+## 5. Миксины — добавление поведения
 
-Миксины подмешиваются **перед** основным классом:
+Миксины ставятся **первыми** в списке родителей:
 ```python
 class MyView(MixinA, MixinB, BaseView):
     ...
 ```
 
-### UserPassesTestMixin — проверка произвольного условия
+### AdminRequiredMixin — только администратор
 
 ```python
-from django.contrib.auth.mixins import UserPassesTestMixin
-
 class AdminRequiredMixin(UserPassesTestMixin):
     def test_func(self):
-        # Возвращает True = доступ разрешён, False = редирект на login
         return (
             self.request.user.is_authenticated
             and self.request.user.role
@@ -133,71 +101,68 @@ class AdminRequiredMixin(UserPassesTestMixin):
         )
 ```
 
-Использование:
-```python
-class ProductCreateView(AdminRequiredMixin, CreateView):
-    ...  # Только для admin
-```
-
-### LoginRequiredMixin — только авторизованные
+### ManagerOrAdminMixin — менеджер или администратор
 
 ```python
-from django.contrib.auth.mixins import LoginRequiredMixin
-
-class SomeView(LoginRequiredMixin, ListView):
-    ...
+class ManagerOrAdminMixin(UserPassesTestMixin):
+    def test_func(self):
+        return (
+            self.request.user.is_authenticated
+            and self.request.user.role
+            and self.request.user.role.name in ("admin", "manager")
+        )
 ```
 
 ---
 
-## 7. Q-объекты — сложные запросы с OR
+## 6. Q-объекты — поиск по нескольким полям
 
 ```python
 from django.db.models import Q
 
-# Обычный AND (через запятую):
-Product.objects.filter(name="boots", category="men")
-
-# OR через Q-объекты:
-Product.objects.filter(
-    Q(name__icontains=query) | Q(description__icontains=query)
-)
-
-# Комбинация:
-Product.objects.filter(
-    Q(name__icontains=q) | Q(description__icontains=q),
-    quantity__gt=0  # AND в конце
+queryset.filter(
+    Q(name__icontains=query)
+    | Q(description__icontains=query)
+    | Q(article__icontains=query)
+    | Q(supplier__name__icontains=query)  # через JOIN на связанную таблицу
 )
 ```
 
-### Lookups (суффиксы фильтрации)
-
-| Суффикс | Что делает | Пример |
-|---------|-----------|--------|
-| `__icontains` | Содержит (без учёта регистра) | `name__icontains="boot"` |
-| `__contains` | Содержит (с учётом регистра) | |
-| `__exact` | Равно | `status__exact="active"` |
-| `__gt` / `__lt` | Больше / меньше | `price__gt=1000` |
-| `__gte` / `__lte` | >= / <= | `quantity__gte=1` |
-| `__in` | В списке | `id__in=[1,2,3]` |
-| `__isnull` | Равно NULL | `photo__isnull=True` |
+`icontains` — содержит строку (без учёта регистра).
 
 ---
 
-## 8. select_related — оптимизация JOIN
+## 7. messages — три типа уведомлений
 
-Без `select_related` каждый `product.supplier.name` = отдельный SQL-запрос:
 ```python
-# N+1 проблема (30 товаров = 31 запрос):
-products = Product.objects.all()
-for p in products:
-    print(p.supplier.name)  # каждый раз запрос к БД!
+from django.contrib import messages
 
-# С select_related (1 запрос с JOIN):
-products = Product.objects.all().select_related("supplier")
-for p in products:
-    print(p.supplier.name)  # данные уже в памяти
+messages.success(request, "Операция выполнена успешно")  # зелёный
+messages.error(request, "Ошибка: нельзя удалить")        # красный
+messages.warning(request, "Внимание: ...")               # жёлтый
+messages.info(request, "Информация: ...")                 # синий
 ```
+
+В шаблоне (base.html):
+```html
+{% for message in messages %}
+<div class="alert alert-{{ message.tags }}">{{ message }}</div>
+{% endfor %}
+```
+
+---
+
+## 8. Матрица доступа по ролям
+
+| Функция | Гость | Клиент | Менеджер | Администратор |
+|---------|-------|--------|---------|---------------|
+| Просмотр товаров | ✓ | ✓ | ✓ | ✓ |
+| Поиск/фильтр/сортировка | — | — | ✓ | ✓ |
+| Просмотр заказов | — | — | ✓ | ✓ |
+| Добавление товара | — | — | — | ✓ |
+| Редактирование товара | — | — | — | ✓ |
+| Удаление товара | — | — | — | ✓ |
+| CRUD заказов | — | — | — | ✓ |
 
 ---
 
@@ -210,11 +175,13 @@ from django.contrib import messages
 from django.contrib.auth.mixins import UserPassesTestMixin
 from django.contrib.auth.views import LoginView
 from django.db.models import Q
+from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
+from django.views import View
 from django.views.generic import CreateView, ListView, UpdateView
 
-from .forms import ProductForm
-from .models import Product, Supplier
+from .forms import OrderForm, ProductForm
+from .models import Order, Product, Supplier
 
 
 class UserLoginView(LoginView):
@@ -235,6 +202,8 @@ class ProductListView(ListView):
                 | Q(description__icontains=search_query)
                 | Q(manufacturer__icontains=search_query)
                 | Q(category__icontains=search_query)
+                | Q(article__icontains=search_query)
+                | Q(supplier__name__icontains=search_query)
             )
         supplier_id = self.request.GET.get("supplier", "")
         if supplier_id and supplier_id != "all":
@@ -261,6 +230,15 @@ class AdminRequiredMixin(UserPassesTestMixin):
             self.request.user.is_authenticated
             and self.request.user.role
             and self.request.user.role.name == "admin"
+        )
+
+
+class ManagerOrAdminMixin(UserPassesTestMixin):
+    def test_func(self):
+        return (
+            self.request.user.is_authenticated
+            and self.request.user.role
+            and self.request.user.role.name in ("admin", "manager")
         )
 
 
@@ -296,11 +274,78 @@ class ProductUpdateView(AdminRequiredMixin, ProductCreateUpdateMixin, UpdateView
     def form_valid(self, form):
         messages.success(self.request, "Товар успешно обновлен")
         return super().form_valid(form)
+
+
+class ProductDeleteView(AdminRequiredMixin, View):
+    def post(self, request, pk):
+        product = get_object_or_404(Product, pk=pk)
+        if product.orderitem_set.exists():
+            messages.error(
+                request,
+                f"Невозможно удалить товар «{product.name}»: он используется в заказах. "
+                "Сначала удалите связанные заказы.",
+            )
+            return redirect("product_list")
+        if product.photo:
+            product.photo.delete(save=False)
+        product.delete()
+        messages.success(request, f"Товар «{product.name}» успешно удалён")
+        return redirect("product_list")
+
+
+class OrderListView(ManagerOrAdminMixin, ListView):
+    model = Order
+    template_name = "core/order_list.html"
+    context_object_name = "orders"
+
+    def get_queryset(self):
+        return (
+            Order.objects.all()
+            .select_related("pickup_point", "user")
+            .prefetch_related("items__product")
+            .order_by("-id")
+        )
+
+
+class OrderCreateView(AdminRequiredMixin, CreateView):
+    model = Order
+    form_class = OrderForm
+    template_name = "core/order_form.html"
+    success_url = reverse_lazy("order_list")
+
+    def form_valid(self, form):
+        messages.success(self.request, "Заказ успешно добавлен")
+        return super().form_valid(form)
+
+
+class OrderUpdateView(AdminRequiredMixin, UpdateView):
+    model = Order
+    form_class = OrderForm
+    template_name = "core/order_form.html"
+    success_url = reverse_lazy("order_list")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["is_edit"] = True
+        return context
+
+    def form_valid(self, form):
+        messages.success(self.request, "Заказ успешно обновлен")
+        return super().form_valid(form)
+
+
+class OrderDeleteView(AdminRequiredMixin, View):
+    def post(self, request, pk):
+        order = get_object_or_404(Order, pk=pk)
+        order_id = order.id
+        order.delete()
+        messages.success(request, f"Заказ №{order_id} успешно удалён")
+        return redirect("order_list")
 ```
 
 ---
 
-## 10. Полный код — config/urls.py
+## 10. Полный код — config/urls.py (финальный)
 
 ```python
 from django.conf import settings
@@ -310,9 +355,8 @@ from django.contrib.auth.views import LogoutView
 from django.urls import path
 
 from core.views import (
-    ProductCreateView,
-    ProductListView,
-    ProductUpdateView,
+    OrderCreateView, OrderDeleteView, OrderListView, OrderUpdateView,
+    ProductCreateView, ProductDeleteView, ProductListView, ProductUpdateView,
     UserLoginView,
 )
 
@@ -323,43 +367,30 @@ urlpatterns = [
     path("products/", ProductListView.as_view(), name="product_list"),
     path("products/add/", ProductCreateView.as_view(), name="product_create"),
     path("products/<int:pk>/edit/", ProductUpdateView.as_view(), name="product_edit"),
+    path("products/<int:pk>/delete/", ProductDeleteView.as_view(), name="product_delete"),
+    path("orders/", OrderListView.as_view(), name="order_list"),
+    path("orders/add/", OrderCreateView.as_view(), name="order_create"),
+    path("orders/<int:pk>/edit/", OrderUpdateView.as_view(), name="order_edit"),
+    path("orders/<int:pk>/delete/", OrderDeleteView.as_view(), name="order_delete"),
 ]
 
 if settings.DEBUG:
     urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 ```
 
-### URL-паттерны
+### Все URL-паттерны
 
-| Паттерн | name | View |
-|---------|------|------|
-| `/` | `login` | UserLoginView |
-| `/logout/` | `logout` | LogoutView |
-| `/products/` | `product_list` | ProductListView |
-| `/products/add/` | `product_create` | ProductCreateView |
-| `/products/5/edit/` | `product_edit` | ProductUpdateView |
+| URL | name | Доступ |
+|-----|------|--------|
+| `/` | `login` | все |
+| `/logout/` | `logout` | все (POST) |
+| `/products/` | `product_list` | все |
+| `/products/add/` | `product_create` | admin |
+| `/products/<pk>/edit/` | `product_edit` | admin |
+| `/products/<pk>/delete/` | `product_delete` | admin (POST) |
+| `/orders/` | `order_list` | manager, admin |
+| `/orders/add/` | `order_create` | admin |
+| `/orders/<pk>/edit/` | `order_edit` | admin |
+| `/orders/<pk>/delete/` | `order_delete` | admin (POST) |
 
 В шаблоне: `{% url 'product_edit' product.id %}` → `/products/5/edit/`
-
----
-
-## 11. Матрица доступа по ролям
-
-| Функция | Гость | Клиент | Менеджер | Администратор |
-|---------|-------|--------|---------|---------------|
-| Просмотр товаров | ✓ | ✓ | ✓ | ✓ |
-| Поиск/фильтр/сортировка | — | — | ✓ | ✓ |
-| Добавление товара | — | — | — | ✓ |
-| Редактирование товара | — | — | — | ✓ |
-| Удаление товара | — | — | — | ✓ |
-
-В шаблоне реализуется через:
-```html
-{% if user.role.name == "admin" or user.role.name == "manager" %}
-    <!-- поиск и фильтры -->
-{% endif %}
-
-{% if user.role.name == "admin" %}
-    <!-- кнопки добавления/редактирования -->
-{% endif %}
-```
