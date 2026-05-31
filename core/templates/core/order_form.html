@@ -1,0 +1,26 @@
+{% extends 'core/base.html' %}
+
+{% block title %}
+{% if is_edit %}Редактирование заказа{% else %}Новый заказ{% endif %}
+{% endblock %}
+
+{% block h1 %}
+{% if is_edit %}Редактирование заказа №{{ object.pk }}{% else %}Новый заказ{% endif %}
+{% endblock %}
+
+{% block content %}
+<div>
+    <a href="{% url 'order_list' %}" class="btn-secondary">← Назад к заказам</a>
+</div>
+<br>
+<div>
+    {% if is_edit %}
+    <p><strong>ID:</strong> <input type="text" value="{{ object.pk }}" disabled style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;"></p>
+    {% endif %}
+    <form method="post">
+        {% csrf_token %}
+        {{ form.as_p }}
+        <button type="submit" class="btn">Сохранить</button>
+    </form>
+</div>
+{% endblock %}
