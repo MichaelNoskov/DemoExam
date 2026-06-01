@@ -183,63 +183,38 @@ def save(self, commit=True):
 
 ```python
 from django import forms
+from django.forms import inlineformset_factory
 
-from .models import Order, PickupPoint, Product, Supplier
+from .models import Category, Manufacturer, Order, OrderItem, Product, Supplier
 
 
 class ProductForm(forms.ModelForm):
-    # Текстовое поле для ввода названия поставщика
-    supplier_name = forms.CharField(label="Поставщик", required=True)
-
+    # Когда category/manufacturer/supplier — ForeignKey, ModelForm автоматически
+    # рендерит их как <select> из всех объектов соответствующей таблицы.
+    # Дополнительный код не нужен.
     class Meta:
         model = Product
         fields = [
-            "article",
-            "name",
-            "unit",
-            "price",
-            "discount",
-            "quantity",
-            "description",
-            "photo",
-            "category",
-            "manufacturer",
+            "article", "name", "unit", "price", "discount",
+            "quantity", "description", "photo",
+            "category", "manufacturer", "supplier",
         ]
         labels = {
             "article": "Артикул",
             "name": "Название",
             "unit": "Единица измерения",
             "price": "Цена",
-            "discount": "Скидка",
+            "discount": "Скидка (%)",
             "quantity": "Количество",
             "description": "Описание",
             "photo": "Фото",
             "category": "Категория",
             "manufacturer": "Производитель",
+            "supplier": "Поставщик",
         }
         widgets = {
             "description": forms.Textarea(attrs={"rows": 3}),
         }
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        # Предзаполняем поле поставщика при редактировании
-        if self.instance.pk:
-            if self.instance.supplier:
-                self.fields["supplier_name"].initial = self.instance.supplier.name
-
-    def save(self, commit=True):
-        # Найти существующего поставщика или создать нового
-        supplier, _ = Supplier.objects.get_or_create(
-            name=self.cleaned_data["supplier_name"].strip()
-        )
-
-        instance = super().save(commit=False)
-        instance.supplier = supplier
-
-        if commit:
-            instance.save()
-        return instance
 
     def clean_price(self):
         price = self.cleaned_data.get("price")
@@ -269,6 +244,13 @@ class OrderForm(forms.ModelForm):
             "delivery_date": forms.DateTimeInput(
                 attrs={"type": "datetime-local"}, format="%Y-%m-%dT%H:%M"
             ),
+            "status": forms.Select(choices=[
+                ("Новый", "Новый"),
+                ("В сборке", "В сборке"),
+                ("Готов к выдаче", "Готов к выдаче"),
+                ("Завершён", "Завершён"),
+                ("Отменён", "Отменён"),
+            ]),
         }
 
     def __init__(self, *args, **kwargs):
@@ -283,22 +265,47 @@ class OrderForm(forms.ModelForm):
         if code is not None and code < 0:
             raise forms.ValidationError("Код получения не может быть отрицательным")
         return code
+
+
+# Inline-формсет: позволяет редактировать OrderItem прямо внутри формы заказа
+OrderItemFormSet = inlineformset_factory(
+    Order,
+    OrderItem,
+    fields=["product", "count"],
+    labels={"product": "Товар", "count": "Количество"},
+    extra=1,       # одна пустая строка для добавления
+    can_delete=True,
+)
 ```
 
-### ID readonly при редактировании
+### ID: предварительный при добавлении, readonly при редактировании
 
-`id` не включается в поля формы — отображается отдельно в шаблоне как disabled-поле:
+`id` не включается в поля формы — отображается отдельно в шаблоне.
+
+```python
+# В view передаём next_id для формы добавления
+def get_context_data(self, **kwargs):
+    context = super().get_context_data(**kwargs)
+    max_id = Product.objects.aggregate(Max("id"))["id__max"] or 0
+    context["next_id"] = max_id + 1
+    return context
+```
 
 ```html
-{% if is_edit %}
 <p><strong>ID:</strong>
-  <input type="text" value="{{ object.pk }}" disabled
+  {% if is_edit %}
+  <input type="text" value="{{ object.pk }}" readonly
          style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;">
+  {% else %}
+  <input type="text" value="{{ next_id }}" disabled
+         style="background: #eee; color: #888; border: 1px solid #ccc; padding: 3px 6px;"
+         title="Предварительный ID — присваивается автоматически">
+  {% endif %}
 </p>
-{% endif %}
 ```
 
-`disabled` — поле видно, но не редактируется и не отправляется в форме.
+- `readonly` — поле видно, редактировать нельзя, значение **отправляется** в форме
+- `disabled` — поле видно, редактировать нельзя, значение **не отправляется** (для ID при добавлении это правильно)
 
 ---
 

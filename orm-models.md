@@ -84,9 +84,65 @@
 | `DO_NOTHING` | Ничего не делать (опасно) |
 
 **В проекте:**
-- `supplier` → CASCADE (удалили поставщика — удались его товары)
-- `user` → SET_NULL (удалили пользователя — заказ остаётся, user=NULL)
-- `role` → SET_NULL (удалили роль — пользователь остаётся без роли)
+- `supplier`, `category`, `manufacturer` в Product → `PROTECT` (нельзя удалить справочник, если на него ссылаются товары; попытка вызовет `ProtectedError`)
+- `product` в OrderItem → `PROTECT` (нельзя удалить товар, если он есть в заказах)
+- `order` в OrderItem → `CASCADE` (удалили заказ — удались его позиции, это логично)
+- `user` → `SET_NULL` (удалили пользователя — заказ остаётся, user=NULL)
+- `role` → `SET_NULL` (удалили роль — пользователь остаётся без роли)
+
+> **Правило выбора:** справочные данные (Supplier, Category, Manufacturer) защищают сами себя через `PROTECT`. Зависимые данные (OrderItem от Order) удаляются каскадом. `SET_NULL` — для «мягких» связей, где объект может существовать без родителя.
+
+---
+
+## 3.1 Третья нормальная форма (3НФ) и справочные таблицы
+
+**Нарушение 3НФ:** если несколько строк хранят одно и то же значение текстом — это избыточность.
+
+```python
+# ПЛОХО — category и manufacturer повторяются в каждой строке Product
+class Product(models.Model):
+    category = models.CharField(max_length=200)     # "Ботинки" × 100 строк
+    manufacturer = models.CharField(max_length=200) # "Nike" × 50 строк
+```
+
+**Решение — вынести повторяющиеся значения в справочные таблицы:**
+
+```python
+class Category(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+class Manufacturer(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+class Product(models.Model):
+    category = models.ForeignKey(Category, on_delete=models.PROTECT)
+    manufacturer = models.ForeignKey(Manufacturer, on_delete=models.PROTECT)
+```
+
+Теперь "Ботинки" хранится один раз в `Category`, все товары ссылаются на неё по `id`.
+
+**Миграция при смене типа поля (CharField → ForeignKey)** требует data migration — промежуточный шаг, который создаёт FK-объекты из существующих текстов:
+
+```python
+# В файле миграции
+def populate_fk_references(apps, schema_editor):
+    Product = apps.get_model("core", "Product")
+    Category = apps.get_model("core", "Category")
+    for product in Product.objects.all():
+        cat, _ = Category.objects.get_or_create(name=product.category_text)
+        product.category = cat
+        product.save()
+
+class Migration(migrations.Migration):
+    operations = [
+        migrations.RenameField("product", "category", "category_text"),  # сохранить старое
+        migrations.CreateModel("Category", ...),
+        migrations.AddField("product", "category", ForeignKey(null=True, ...)),
+        migrations.RunPython(populate_fk_references, migrations.RunPython.noop),
+        migrations.AlterField("product", "category", ForeignKey(...)),    # убрать null
+        migrations.RemoveField("product", "category_text"),               # удалить старое
+    ]
+```
 
 ---
 
@@ -193,6 +249,22 @@ class Supplier(models.Model):
         return self.name
 
 
+# Справочные таблицы для 3НФ — выделены из Product,
+# чтобы не хранить повторяющийся текст в каждой строке
+class Category(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Manufacturer(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class PickupPoint(models.Model):
     address = models.TextField()
 
@@ -205,9 +277,9 @@ class Product(models.Model):
     name = models.CharField(max_length=255)
     unit = models.CharField(max_length=20, default="шт.")
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    manufacturer = models.CharField(max_length=200)
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
-    category = models.CharField(max_length=200)
+    manufacturer = models.ForeignKey(Manufacturer, on_delete=models.PROTECT)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    category = models.ForeignKey(Category, on_delete=models.PROTECT)
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     quantity = models.IntegerField(default=0)
     description = models.TextField()
@@ -247,7 +319,7 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)  # PROTECT: нельзя удалить товар из заказа
     count = models.IntegerField()
 ```
 
@@ -258,7 +330,7 @@ class OrderItem(models.Model):
 ```python
 # core/admin.py
 from django.contrib import admin
-from .models import Role, User, Supplier, PickupPoint, Product, Order, OrderItem
+from .models import Category, Manufacturer, Order, OrderItem, PickupPoint, Product, Role, Supplier, User
 
 admin.site.register(Role)
 admin.site.register(User)

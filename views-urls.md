@@ -174,13 +174,13 @@ from typing import Any
 from django.contrib import messages
 from django.contrib.auth.mixins import UserPassesTestMixin
 from django.contrib.auth.views import LoginView
-from django.db.models import Q
+from django.db.models import Max, ProtectedError, Q
 from django.shortcuts import get_object_or_404, redirect
 from django.urls import reverse_lazy
 from django.views import View
 from django.views.generic import CreateView, ListView, UpdateView
 
-from .forms import OrderForm, ProductForm
+from .forms import OrderForm, OrderItemFormSet, ProductForm
 from .models import Order, Product, Supplier
 
 
@@ -249,18 +249,25 @@ class ProductCreateUpdateMixin:
         return context
 
 
-class ProductCreateView(AdminRequiredMixin, ProductCreateUpdateMixin, CreateView):
+class ProductCreateView(AdminRequiredMixin, CreateView):
     model = Product
     form_class = ProductForm
     template_name = "core/product_form.html"
     success_url = reverse_lazy("product_list")
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # Вычисляем предварительный ID для отображения в форме
+        max_id = Product.objects.aggregate(Max("id"))["id__max"] or 0
+        context["next_id"] = max_id + 1
+        return context
 
     def form_valid(self, form):
         messages.success(self.request, "Товар успешно добавлен")
         return super().form_valid(form)
 
 
-class ProductUpdateView(AdminRequiredMixin, ProductCreateUpdateMixin, UpdateView):
+class ProductUpdateView(AdminRequiredMixin, UpdateView):
     model = Product
     form_class = ProductForm
     template_name = "core/product_form.html"
@@ -272,24 +279,25 @@ class ProductUpdateView(AdminRequiredMixin, ProductCreateUpdateMixin, UpdateView
         return context
 
     def form_valid(self, form):
-        messages.success(self.request, "Товар успешно обновлен")
+        messages.success(self.request, "Товар успешно обновлён")
         return super().form_valid(form)
 
 
 class ProductDeleteView(AdminRequiredMixin, View):
     def post(self, request, pk):
         product = get_object_or_404(Product, pk=pk)
-        if product.orderitem_set.exists():
+        try:
+            if product.photo:
+                product.photo.delete(save=False)
+            product.delete()
+            messages.success(request, f"Товар «{product.name}» успешно удалён")
+        except ProtectedError:
+            # ForeignKey(on_delete=PROTECT) не даст удалить товар из заказа на уровне БД
             messages.error(
                 request,
                 f"Невозможно удалить товар «{product.name}»: он используется в заказах. "
                 "Сначала удалите связанные заказы.",
             )
-            return redirect("product_list")
-        if product.photo:
-            product.photo.delete(save=False)
-        product.delete()
-        messages.success(request, f"Товар «{product.name}» успешно удалён")
         return redirect("product_list")
 
 
@@ -313,9 +321,28 @@ class OrderCreateView(AdminRequiredMixin, CreateView):
     template_name = "core/order_form.html"
     success_url = reverse_lazy("order_list")
 
-    def form_valid(self, form):
-        messages.success(self.request, "Заказ успешно добавлен")
-        return super().form_valid(form)
+    def get(self, request, *args, **kwargs):
+        self.object = None
+        form = self.get_form()
+        item_formset = OrderItemFormSet()
+        max_id = Order.objects.aggregate(Max("id"))["id__max"] or 0
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset, next_id=max_id + 1)
+        )
+
+    def post(self, request, *args, **kwargs):
+        self.object = None
+        form = self.get_form()
+        item_formset = OrderItemFormSet(request.POST)
+        if form.is_valid() and item_formset.is_valid():
+            self.object = form.save()
+            item_formset.instance = self.object  # привязываем позиции к заказу
+            item_formset.save()
+            messages.success(request, "Заказ успешно добавлен")
+            return redirect(self.success_url)
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset)
+        )
 
 
 class OrderUpdateView(AdminRequiredMixin, UpdateView):
@@ -324,14 +351,26 @@ class OrderUpdateView(AdminRequiredMixin, UpdateView):
     template_name = "core/order_form.html"
     success_url = reverse_lazy("order_list")
 
-    def get_context_data(self, **kwargs):
-        context = super().get_context_data(**kwargs)
-        context["is_edit"] = True
-        return context
+    def get(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = self.get_form()
+        item_formset = OrderItemFormSet(instance=self.object)
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset, is_edit=True)
+        )
 
-    def form_valid(self, form):
-        messages.success(self.request, "Заказ успешно обновлен")
-        return super().form_valid(form)
+    def post(self, request, *args, **kwargs):
+        self.object = self.get_object()
+        form = self.get_form()
+        item_formset = OrderItemFormSet(request.POST, instance=self.object)
+        if form.is_valid() and item_formset.is_valid():
+            form.save()
+            item_formset.save()
+            messages.success(request, "Заказ успешно обновлён")
+            return redirect(self.success_url)
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset, is_edit=True)
+        )
 
 
 class OrderDeleteView(AdminRequiredMixin, View):
