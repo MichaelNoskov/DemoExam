@@ -1,6 +1,6 @@
 # Views и URL-маршрутизация
 
-← [Назад к пайплайну](README.md)
+← [Назад к пайплайну](README.md) | → [Запросы к БД](orm-queries.md)
 
 ---
 
@@ -34,6 +34,88 @@ class ProductListView(ListView):
         return context
 ```
 
+### `get_queryset()` — как он работает
+
+`ListView` вызывает `get_queryset()` один раз и кладёт результат в контекст под именем `context_object_name`. По умолчанию возвращает `Model.objects.all()`.
+
+**Главное:** queryset — ленивый. Методы `.filter()`, `.order_by()`, `.select_related()` не выполняют SQL — они строят описание запроса. SQL выполняется один раз, когда Django рендерит шаблон и начинает итерацию по объектам.
+
+```python
+def get_queryset(self):
+    # Шаг 1 — начало
+    queryset = Product.objects.all().select_related("supplier", "category", "manufacturer")
+
+    # Шаг 2 — поиск (если передан GET-параметр)
+    search_query = self.request.GET.get("search", "")
+    if search_query:
+        queryset = queryset.filter(          # добавляет WHERE к queryset
+            Q(name__icontains=search_query)
+            | Q(description__icontains=search_query)
+            | Q(manufacturer__name__icontains=search_query)
+            | Q(category__name__icontains=search_query)
+            | Q(article__icontains=search_query)
+            | Q(supplier__name__icontains=search_query)
+        )
+
+    # Шаг 3 — фильтр по поставщику (если выбран)
+    supplier_id = self.request.GET.get("supplier", "")
+    if supplier_id and supplier_id != "all":
+        queryset = queryset.filter(supplier_id=supplier_id)   # AND
+
+    # Шаг 4 — сортировка (если выбрана)
+    sort = self.request.GET.get("sort", "")
+    if sort == "asc":
+        queryset = queryset.order_by("quantity")
+    elif sort == "desc":
+        queryset = queryset.order_by("-quantity")
+
+    return queryset  # SQL ещё не выполнен — всё ещё queryset
+```
+
+Каждый шаг — дополнительное условие к одному финальному SQL-запросу. Если пользователь ничего не ввёл, queryset остаётся `Product.objects.all()`.
+
+### `select_related` в get_queryset
+
+Без `select_related` при рендере шаблона `{{ product.supplier.name }}` выполнился бы отдельный SQL-запрос для **каждого** товара. С `select_related` всё загружается одним JOIN.
+
+```python
+# Без оптимизации (N+1 проблема):
+Product.objects.all()
+# → 1 запрос: SELECT * FROM product
+# → N запросов: SELECT * FROM supplier WHERE id=? (для каждого товара)
+
+# С оптимизацией:
+Product.objects.all().select_related("supplier", "category", "manufacturer")
+# → 1 запрос с тремя JOIN-ами
+```
+
+Для заказов используется `prefetch_related` — т.к. `items` это обратная FK (один заказ → много позиций):
+
+```python
+Order.objects.all()
+    .select_related("pickup_point", "user")    # FK прямые → JOIN
+    .prefetch_related("items__product")         # обратная FK → отдельный SELECT
+    .order_by("-id")
+```
+
+`items__product` означает: prefetch `OrderItem`-ы через `items`, и для каждого из них select_related `Product`. Django делает это за 3 запроса вместо 1 + N + N×M.
+
+### `get_context_data()` — дополнительные переменные для шаблона
+
+`get_queryset()` кладёт результат только в одну переменную (`products`). Если шаблону нужно больше данных — используем `get_context_data()`:
+
+```python
+def get_context_data(self, **kwargs):
+    context = super().get_context_data(**kwargs)  # ← обязательно! иначе products не попадёт
+    context["suppliers"] = Supplier.objects.all()     # список для фильтра-дропдауна
+    context["current_search"] = self.request.GET.get("search", "")   # вернуть в инпут
+    context["current_supplier"] = self.request.GET.get("supplier", "")
+    context["current_sort"] = self.request.GET.get("sort", "")
+    return context
+```
+
+Без `super()` в контексте не окажется ни `products`, ни стандартных переменных CBV.
+
 ---
 
 ## 3. CreateView / UpdateView
@@ -64,6 +146,25 @@ class ProductUpdateView(UpdateView):
 
 ---
 
+## 3.1 get_context_data в CreateView/UpdateView
+
+`get_context_data` работает одинаково во всех CBV. В `CreateView` он особенно полезен для передачи предварительного ID:
+
+```python
+class ProductCreateView(AdminRequiredMixin, CreateView):
+    ...
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        # MAX(id) из БД + 1 → предварительный ID для отображения в форме
+        max_id = Product.objects.aggregate(Max("id"))["id__max"] or 0
+        context["next_id"] = max_id + 1
+        return context
+```
+
+`or 0` — защита от пустой таблицы: если товаров нет, `aggregate` вернёт `{"id__max": None}`.
+
+---
+
 ## 4. View — кастомное представление (для удаления)
 
 ```python
@@ -77,7 +178,24 @@ class ProductDeleteView(View):
         return redirect("product_list")
 ```
 
-Почему `View` а не `DeleteView`: нужен ручной контроль — проверка ссылочной целостности перед удалением.
+Почему `View` а не `DeleteView`: нужен ручной контроль — перехват `ProtectedError` при удалении товара, который есть в заказах.
+
+```python
+class ProductDeleteView(AdminRequiredMixin, View):
+    def post(self, request, pk):
+        product = get_object_or_404(Product, pk=pk)
+        try:
+            if product.photo:
+                product.photo.delete(save=False)   # удалить файл с диска
+            product.delete()                        # удалить из БД
+            messages.success(request, f"Товар «{product.name}» успешно удалён")
+        except ProtectedError:
+            # Срабатывает когда ForeignKey(on_delete=PROTECT) запрещает удаление
+            messages.error(request, f"Нельзя удалить «{product.name}»: есть связанные заказы")
+        return redirect("product_list")
+```
+
+`product.photo.delete(save=False)` — удаляет файл с диска, `save=False` значит «не пересохранять объект в БД после удаления файла» (объект всё равно сейчас удалится).
 
 ---
 
@@ -124,11 +242,86 @@ queryset.filter(
     Q(name__icontains=query)
     | Q(description__icontains=query)
     | Q(article__icontains=query)
-    | Q(supplier__name__icontains=query)  # через JOIN на связанную таблицу
+    | Q(supplier__name__icontains=query)  # через JOIN на связанную FK-таблицу
 )
 ```
 
-`icontains` — содержит строку (без учёта регистра).
+`icontains` — содержит строку без учёта регистра (`ILIKE '%query%'` в PostgreSQL).
+
+`|` — OR между условиями. Все `Q(...)` в одном `filter()` соединяются через OR, если между ними стоит `|`. Без `|` — через AND.
+
+Поиск по FK-полям через `__`: `supplier__name__icontains` автоматически добавляет JOIN с таблицей `core_supplier`.
+
+Подробнее о Q-объектах и всех lookup expressions → [Запросы к БД](orm-queries.md#5-q-объекты--or-и-and-в-одном-запросе)
+
+---
+
+## 6.1 Inline formset — форма с вложенными объектами
+
+Используется в `OrderCreateView` / `OrderUpdateView` для добавления позиций заказа (OrderItem) прямо в форме заказа.
+
+**Почему нельзя просто CreateView:**  
+При создании заказа нужно сохранить сам `Order` И несколько `OrderItem`. `CreateView` умеет только одну форму. Поэтому переопределяем `get()` и `post()` вручную.
+
+```python
+class OrderCreateView(AdminRequiredMixin, CreateView):
+    model = Order
+    form_class = OrderForm
+    template_name = "core/order_form.html"
+    success_url = reverse_lazy("order_list")
+
+    def get(self, request, *args, **kwargs):
+        self.object = None       # сигнал для CBV: объект ещё не создан
+        form = self.get_form()   # пустая OrderForm
+        item_formset = OrderItemFormSet()           # пустой формсет (extra=1 пустая строка)
+        max_id = Order.objects.aggregate(Max("id"))["id__max"] or 0
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset, next_id=max_id + 1)
+        )
+
+    def post(self, request, *args, **kwargs):
+        self.object = None
+        form = self.get_form()                         # OrderForm с данными из POST
+        item_formset = OrderItemFormSet(request.POST)  # формсет с данными из POST
+        if form.is_valid() and item_formset.is_valid():
+            self.object = form.save()          # 1. сохранить заказ → получаем Order с id
+            item_formset.instance = self.object  # 2. привязать формсет к этому заказу
+            item_formset.save()                 # 3. сохранить все OrderItem
+            messages.success(request, "Заказ успешно добавлен")
+            return redirect(self.success_url)
+        # Если форма невалидна — вернуть с ошибками
+        return self.render_to_response(
+            self.get_context_data(form=form, item_formset=item_formset)
+        )
+```
+
+**При редактировании** формсет передаёт `instance=self.object` — тогда он загружает существующие позиции и позволяет их менять или удалять (`can_delete=True`):
+
+```python
+def get(self, request, *args, **kwargs):
+    self.object = self.get_object()   # получаем существующий заказ
+    form = self.get_form()
+    item_formset = OrderItemFormSet(instance=self.object)  # загружает текущие позиции
+    return self.render_to_response(
+        self.get_context_data(form=form, item_formset=item_formset, is_edit=True)
+    )
+```
+
+**В шаблоне** формсет рендерится через таблицу:
+
+```html
+{{ item_formset.management_form }}  {# скрытые поля с количеством строк — обязательно! #}
+{% for item_form in item_formset %}
+<tr>
+    <td>{{ item_form.product }}</td>   {# дропдаун из Product #}
+    <td>{{ item_form.count }}</td>
+    <td>{% if item_form.instance.pk %}{{ item_form.DELETE }}{% endif %}</td>
+    {{ item_form.id }}   {# скрытый id для UPDATE, а не INSERT #}
+</tr>
+{% endfor %}
+```
+
+`management_form` — это скрытые поля `TOTAL_FORMS`, `INITIAL_FORMS`, `MIN_NUM_FORMS`, `MAX_NUM_FORMS`. Без них Django не поймёт сколько строк формсета было отправлено и выдаст ошибку.
 
 ---
 

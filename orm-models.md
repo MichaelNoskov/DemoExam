@@ -1,6 +1,6 @@
 # ORM-модели Django
 
-← [Назад к пайплайну](README.md)
+← [Назад к пайплайну](README.md) | → [Запросы к БД (QuerySet, filter, select_related…)](orm-queries.md)
 
 ---
 
