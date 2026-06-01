@@ -14,12 +14,50 @@
 </div>
 <br>
 <div>
-    {% if is_edit %}
-    <p><strong>ID:</strong> <input type="text" value="{{ object.pk }}" disabled style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;"></p>
-    {% endif %}
+    <p>
+        <strong>ID:</strong>
+        {% if is_edit %}
+        <input type="text" value="{{ object.pk }}" readonly style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;">
+        {% else %}
+        <input type="text" value="{{ next_id }}" disabled style="background: #eee; border: 1px solid #ccc; padding: 3px 6px; color: #888;" title="Предварительный ID — присваивается автоматически">
+        {% endif %}
+    </p>
     <form method="post">
         {% csrf_token %}
         {{ form.as_p }}
+
+        <hr>
+        <h3>Позиции заказа</h3>
+        {{ item_formset.management_form }}
+        <table style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr>
+                    <th style="text-align: left; padding: 4px 8px;">Товар</th>
+                    <th style="text-align: left; padding: 4px 8px;">Количество</th>
+                    <th style="text-align: left; padding: 4px 8px;">Удалить</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for item_form in item_formset %}
+                <tr>
+                    <td style="padding: 4px 8px;">
+                        {{ item_form.product }}
+                        {% for error in item_form.product.errors %}<span style="color:red">{{ error }}</span>{% endfor %}
+                    </td>
+                    <td style="padding: 4px 8px;">
+                        {{ item_form.count }}
+                        {% for error in item_form.count.errors %}<span style="color:red">{{ error }}</span>{% endfor %}
+                    </td>
+                    <td style="padding: 4px 8px;">
+                        {% if item_form.instance.pk %}{{ item_form.DELETE }}{% endif %}
+                    </td>
+                    {{ item_form.id }}
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+
+        <br>
         <button type="submit" class="btn">Сохранить</button>
     </form>
 </div>

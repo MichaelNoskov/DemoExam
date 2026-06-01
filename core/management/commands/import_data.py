@@ -4,7 +4,7 @@ from typing import Any
 
 from django.core.management.base import BaseCommand
 
-from core.models import Order, OrderItem, PickupPoint, Product, Role, Supplier, User
+from core.models import Category, Manufacturer, Order, OrderItem, PickupPoint, Product, Role, Supplier, User
 
 
 class Command(BaseCommand):
@@ -26,13 +26,28 @@ class Command(BaseCommand):
                 if not row:
                     continue
 
-                sup_obj, _ = Supplier.objects.get_or_create(name=row["supplier"])
-                row["supplier"] = sup_obj
-                
+                supplier, _ = Supplier.objects.get_or_create(name=row["supplier"])
+                category, _ = Category.objects.get_or_create(name=row["category"])
+                manufacturer, _ = Manufacturer.objects.get_or_create(name=row["manufacturer"])
+
                 if row.get("photo") and not row["photo"].startswith("products/"):
                     row["photo"] = f"products/{row['photo']}"
-                
-                Product.objects.update_or_create(article=row["article"], defaults=row)
+
+                Product.objects.update_or_create(
+                    article=row["article"],
+                    defaults={
+                        "name": row["name"],
+                        "unit": row.get("unit", "шт."),
+                        "price": row["price"],
+                        "discount": row.get("discount", 0),
+                        "quantity": row["quantity"],
+                        "description": row.get("description", ""),
+                        "photo": row.get("photo", ""),
+                        "supplier": supplier,
+                        "category": category,
+                        "manufacturer": manufacturer,
+                    },
+                )
 
         # users
         with open(os.path.join(base_path, "users.csv"), encoding="utf-8-sig") as f:
@@ -85,5 +100,3 @@ class Command(BaseCommand):
                             )
                         except Exception:
                             pass
-
-

@@ -50,7 +50,11 @@
     {% for product in products %}
     <div class="product-card
         {% if product.discount > 15 %}sale{% endif %}
-        {% if product.quantity == 0 %}out-of-stock{% endif %}">
+        {% if product.quantity == 0 %}out-of-stock{% endif %}"
+        {% if user.role.name == 'admin' %}
+        onclick="window.location='{% url 'product_edit' product.id %}'"
+        style="cursor: pointer;"
+        {% endif %}>
         {% if product.photo %}
         <img src="{{ product.photo.url }}" class="image" alt="{{ product.name }}">
         {% else %}

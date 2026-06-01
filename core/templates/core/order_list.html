@@ -30,7 +30,7 @@
     </thead>
     <tbody>
         {% for order in orders %}
-        <tr>
+        <tr {% if user.role.name == 'admin' %}onclick="window.location='{% url 'order_edit' order.id %}'" style="cursor: pointer;"{% endif %}>
             <td>{{ order.id }}</td>
             <td>{{ order.client_name|default:"—" }}</td>
             <td>{{ order.status }}</td>

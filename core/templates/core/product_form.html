@@ -14,9 +14,14 @@
 </div>
 <br>
 <div>
-    {% if is_edit %}
-    <p><strong>ID:</strong> <input type="text" value="{{ object.pk }}" disabled style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;"></p>
-    {% endif %}
+    <p>
+        <strong>ID:</strong>
+        {% if is_edit %}
+        <input type="text" value="{{ object.pk }}" readonly style="background: #eee; border: 1px solid #ccc; padding: 3px 6px;">
+        {% else %}
+        <input type="text" value="{{ next_id }}" disabled style="background: #eee; border: 1px solid #ccc; padding: 3px 6px; color: #888;" title="Предварительный ID — присваивается автоматически">
+        {% endif %}
+    </p>
     <form method="post" enctype="multipart/form-data">
         {% csrf_token %}
         {{ form.as_p }}

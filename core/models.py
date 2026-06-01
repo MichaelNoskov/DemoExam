@@ -22,6 +22,20 @@ class Supplier(models.Model):
         return self.name
 
 
+class Category(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class Manufacturer(models.Model):
+    name = models.CharField(max_length=200, unique=True)
+
+    def __str__(self) -> str:
+        return self.name
+
+
 class PickupPoint(models.Model):
     address = models.TextField()
 
@@ -34,9 +48,9 @@ class Product(models.Model):
     name = models.CharField(max_length=255)
     unit = models.CharField(max_length=20, default="шт.")
     price = models.DecimalField(max_digits=10, decimal_places=2)
-    manufacturer = models.CharField(max_length=200)
-    supplier = models.ForeignKey(Supplier, on_delete=models.CASCADE)
-    category = models.CharField(max_length=200)
+    manufacturer = models.ForeignKey(Manufacturer, on_delete=models.PROTECT)
+    supplier = models.ForeignKey(Supplier, on_delete=models.PROTECT)
+    category = models.ForeignKey(Category, on_delete=models.PROTECT)
     discount = models.DecimalField(max_digits=5, decimal_places=2, default=0)
     quantity = models.IntegerField(default=0)
     description = models.TextField()
@@ -75,5 +89,5 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, related_name="items", on_delete=models.CASCADE)
-    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.PROTECT)
     count = models.IntegerField()
